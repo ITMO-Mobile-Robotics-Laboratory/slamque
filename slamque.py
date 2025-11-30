@@ -246,7 +246,7 @@ def process_map(path_in, outdir, threshold_method='mean', min_component_area=30,
     # Here we use normalized grayscale
     # optionally apply Gaussian and threshold small blobs
     img_harris_input = cv2.GaussianBlur(img8, (3,3), 0)
-    dst_norm_uint8, corners = harris_corners_steps(img_harris_input, blockSize=2, ksize=3, k=0.04, thresh_rel=0.4)
+    dst_norm_uint8, corners = harris_corners_steps(img_harris_input, blockSize=3, ksize=3, k=0.04, thresh_rel=0.4)
     # overlay corners
     corner_vis = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
     for (y,x) in corners:
@@ -372,6 +372,49 @@ def process_map(path_in, outdir, threshold_method='mean', min_component_area=30,
     print("Intermediate images saved to:", outdir)
     return summary
 
+
+def diff_heatmap(img1, img2):
+    """
+    Создаёт heatmap различий между двумя картами одинакового размера.
+
+    img1, img2 — uint8, 0..255
+    0 (чёрный) – occupied
+    255 (белый) – unknown/free
+
+    Возвращает BGR-изображение heatmap.
+    """
+
+    if img1.shape != img2.shape:
+        raise ValueError("Images must be same size for heatmap")
+
+    # Разница по модулю
+    diff = cv2.absdiff(img1, img2)
+
+    # Создаём цветную карту
+    h, w = img1.shape
+    heat = np.zeros((h, w, 3), dtype=np.uint8)
+
+    # Маски
+    same = diff < 10  # почти одинаковые пиксели
+    img1_occ = img1 < 128  # занято (чёрное)
+    img2_occ = img2 < 128
+
+    # Отличия разных типов
+    only1 = np.logical_and(img1_occ, ~img2_occ)  # карта1 занята → карта2 свободна
+    only2 = np.logical_and(img2_occ, ~img1_occ)  # карта2 занята → карта1 свободна
+    both_diff = np.logical_and(~same, ~only1)
+    both_diff = np.logical_and(both_diff, ~only2)
+
+    # Раскраска
+    heat[same] = [180, 180, 180]  # серый (совпадают)
+    heat[only1] = [0, 0, 255]  # красный (занято только у карты1)
+    heat[only2] = [255, 0, 0]  # синий (занято только у карты2)
+    heat[both_diff] = [0, 255, 0]  # зелёный (отличаются, но не занятостью: неизвестно/серая зона)
+
+    return heat
+
+
+
 def compare_maps(path1, path2, outdir, threshold_method='mean', min_component_area=30):
     ensure_dir(outdir)
 
@@ -392,6 +435,8 @@ def compare_maps(path1, path2, outdir, threshold_method='mean', min_component_ar
     else:
         img1_ext, img2_ext = img1, img2
 
+    heatmap = diff_heatmap(img1_ext, img2_ext)
+    cv2.imwrite(os.path.join(outdir, "maps_difference_heatmap.png"), heatmap)
     # временные файлы
     tmp1 = os.path.join(outdir, "tmp_map1.pgm")
     tmp2 = os.path.join(outdir, "tmp_map2.pgm")
@@ -421,6 +466,8 @@ def compare_maps(path1, path2, outdir, threshold_method='mean', min_component_ar
     print("Ratio map1/map2:", comparison["occupied_fraction_ratio"])
 
     print("\nDetailed comparison saved to comparison.json")
+
+
 
 # ---------- CLI ----------
 
